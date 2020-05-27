@@ -1,3 +1,4 @@
+
 /obj/machinery/autolathe
 	name = "autolathe"
 	desc = "It produces items using metal and glass."
@@ -12,9 +13,11 @@
 
 	circuit = /obj/item/weapon/circuitboard/autolathe
 	var/datum/category_collection/autolathe/machine_recipes
-	var/list/stored_material =  list(DEFAULT_WALL_MATERIAL = 0, "glass" = 0)
-	var/list/storage_capacity = list(DEFAULT_WALL_MATERIAL = 0, "glass" = 0)
+	var/list/stored_material =  list(DEFAULT_WALL_MATERIAL = 0, MAT_GLASS = 0)
+	var/list/storage_capacity = list(DEFAULT_WALL_MATERIAL = 0, MAT_GLASS = 0)
 	var/datum/category_group/autolathe/current_category
+
+	var/list/queue = list()	// The build queue!
 
 	var/hacked = 0
 	var/disabled = 0
@@ -25,6 +28,7 @@
 	var/build_time = 50
 
 	var/datum/wires/autolathe/wires = null
+	var/ui_template = null
 
 	var/filtertext
 
@@ -45,6 +49,85 @@
 			autolathe_recipes = new()
 		machine_recipes = autolathe_recipes
 		current_category = machine_recipes.categories[1]
+
+
+// Return data for NanoUI interface, called by ui_interact
+/obj/machinery/autolathe/proc/get_ui_data()
+	update_recipe_list()
+	var/list/data = list()
+
+	var/list/current = queue.len ? queue[1] : null
+	if(current)
+		data["current"] = "[current[1]]"
+		data["builtperc"] = round((progress / build_time) * 100)
+	data["queue"] = get_queue_ui_data()
+	data["buildable"] = get_build_options()
+	data["category"] =  current_category
+	data["categories"] = machine_recipes.categories
+	data["materials"] = get_materials_ui_data()
+
+	return data;
+
+/obj/machinery/autolathe/proc/get_queue_ui_data()
+	var/list/queue_data = list()
+	var/temp_metal = stored_material[DEFAULT_WALL_MATERIAL]
+	var/temp_glass = stored_material[MAT_GLASS]
+	for(var/i in queue)
+		var/datum/category_item/autolathe/D = queue[i][1]
+		var/qty = queue[i][2]
+		temp_metal -= max(0, D.resources[DEFAULT_WALL_MATERIAL] * qty * (D.no_scale ? 1 : mat_efficiency))
+		temp_glass -= max(0, D.resources[MAT_GLASS] * qty * (D.no_scale ? 1 : mat_efficiency))
+		var/can_build = temp_metal >= 0 && temp_glass >= 0
+		queue_data[++queue_data.len] = list("name" = initial(D.name), "qty" = qty, "can_build" = can_build)
+	return queue_data
+
+/obj/machinery/autolathe/proc/get_materials_ui_data()
+	var/list/materials_ui = list()
+	for(var/mat in stored_material)
+		var/amount = stored_material[mat]
+		materials_ui[++materials_ui.len] = list(
+				"id" = mat,
+				"name" = material_display_name(mat),
+				"amt" = amount,
+				"max" = storage_capacity[mat]
+		)
+	return materials_ui
+
+/obj/machinery/autolathe/proc/get_build_options()
+	var/list/L = list()
+	for(var/datum/category_item/autolathe/R in current_category.items)
+		if(R.hidden && !hacked)
+			continue
+		if(filtertext && findtext(R.name, filtertext) == 0)
+			continue
+		var/coeff = (R.no_scale ? 1 : mat_efficiency) //stacks are unaffected by production coefficient
+
+		// We combined calcualting max build qty and resources list into a single pass		
+		var/list/resources = list()
+		var/max_build_qty = R.is_stack ? R.max_stack : 1
+		var/list/materials = R.resources
+		for(var/mat in materials)
+			var/have = stored_material[mat] || 0
+			var/required = max(1, materials[mat] * coeff)
+			max_build_qty = min(max_build_qty, round(have / required))
+			resources[++resources.len] = list("name" = material_display_name(mat), "amt" = required, "missing" = (have < required))
+		L[++L.len] = list("name" = R.name, "id" = ref(R), "category" = R.category.name, "max" = max_build_qty, "resources" = resources)
+	return L
+
+/obj/machinery/autolathe/ui_interact(var/mob/user, var/ui_key = "main", var/datum/nanoui/ui = null, var/force_open = 1, var/datum/topic_state/state = default_state)
+	var/list/data = get_ui_data()
+
+	var/datum/asset/iconsheet/research_designs/icon_assets = get_asset_datum(/datum/asset/iconsheet/research_designs)
+	icon_assets.send(user)
+
+	ui = SSnanoui.try_update_ui(user, src, ui_key, ui, data, force_open)
+	if(!ui)
+		ui = new(user, src, ui_key, ui_template, "[capitalize(name)] UI", 800, 600)
+		ui.add_template("designBuildOptions", "design_build_options.tmpl")
+		ui.add_stylesheet("../../iconsheet_[icon_assets.name].css")
+		ui.set_initial_data(data)
+		ui.open()
+		ui.set_auto_update(1)
 
 /obj/machinery/autolathe/interact(mob/user as mob)
 	update_recipe_list()
@@ -216,85 +299,87 @@
 	return
 
 /obj/machinery/autolathe/attack_hand(mob/user as mob)
-	user.set_machine(src)
-	interact(user)
+	if(..() || (disabled && !panel_open))
+		to_chat(user, "<span class='danger'>\The [src] is disabled!</span>")
+		return
+	if(shocked)
+		shock(user, 50)
+	
+	user.set_machine(src)	
+	ui_interact(user)
 
 /obj/machinery/autolathe/Topic(href, href_list)
 	if(..())
 		return
 
-	usr.set_machine(src)
 	add_fingerprint(usr)
 
 	if(busy)
 		to_chat(usr, "<span class='notice'>The autolathe is busy. Please wait for completion of previous operation.</span>")
 		return
 
-	else if(href_list["setfilter"])
-		var/filterstring = input(usr, "Input a filter string, or blank to not filter:", "Design Filter", filtertext) as null|text
-		if(!Adjacent(usr))
-			return
-		if(isnull(filterstring)) //Clicked Cancel
-			return
-		if(filterstring == "") //Cleared value
-			filtertext = null
-		filtertext = sanitize(filterstring, 25)
+	if(!isnull(href_list["search"]))
+		var/filterstring = href_list["search"]
+		if(!filterstring || length(filterstring) <= 0)
+			filterstring = null
+		else
+			filtertext = sanitize(filterstring, 25)
 
-	if(href_list["change_category"])
-
-		var/choice = input("Which category do you wish to display?") as null|anything in machine_recipes.categories
-		if(!choice) return
+	if(href_list["category"])
+		var/datum/category_group/autolathe/choice = machine_recipes.categories_by_name[href_list["category"]]
+		if(!istype(choice))
+			return
 		current_category = choice
 
-	if(href_list["make"] && machine_recipes)
-		var/multiplier = text2num(href_list["multiplier"])
-		var/datum/category_item/autolathe/making = locate(href_list["make"]) in current_category.items
+	// TODO - Change this to queue instead of make
+	if(href_list["build"])
+		user_try_print_id(href_list["build"], href_list["amount"])
 
-		//Exploit detection, not sure if necessary after rewrite.
-		if(!making || multiplier < 0 || multiplier > 100)
-			var/turf/exploit_loc = get_turf(usr)
-			message_admins("[key_name_admin(usr)] tried to exploit an autolathe to duplicate an item! ([exploit_loc ? "<a href='?_src_=holder;adminplayerobservecoodjump=1;X=[exploit_loc.x];Y=[exploit_loc.y];Z=[exploit_loc.z]'>JMP</a>" : "null"])", 0)
-			log_admin("EXPLOIT : [key_name(usr)] tried to exploit an autolathe to duplicate an item!")
-			return
 
-		busy = 1
-		update_use_power(USE_POWER_ACTIVE)
+/obj/machinery/autolathe/proc/user_try_print_id(id, amount)
+	// TODO
+	var/multiplier = text2num(href_list["multiplier"])
+	var/datum/category_item/autolathe/making = locate(href_list["make"]) in current_category.items
+	//Exploit detection, not sure if necessary after rewrite.
+	if(!making || multiplier < 0 || multiplier > 100)
+		var/turf/exploit_loc = get_turf(usr)
+		message_admins("[key_name_admin(usr)] tried to exploit an autolathe to duplicate an item! ([exploit_loc ? "<a href='?_src_=holder;adminplayerobservecoodjump=1;X=[exploit_loc.x];Y=[exploit_loc.y];Z=[exploit_loc.z]'>JMP</a>" : "null"])", 0)
+		log_admin("EXPLOIT : [key_name(usr)] tried to exploit an autolathe to duplicate an item!")
+		return
 
-		//Check if we still have the materials.
-		var/coeff = (making.no_scale ? 1 : mat_efficiency) //stacks are unaffected by production coefficient
-		for(var/material in making.resources)
-			if(!isnull(stored_material[material]))
-				if(stored_material[material] < round(making.resources[material] * coeff) * multiplier)
-					return
 
-		//Consume materials.
-		for(var/material in making.resources)
-			if(!isnull(stored_material[material]))
-				stored_material[material] = max(0, stored_material[material] - round(making.resources[material] * coeff) * multiplier)
+/// Check that we still have enough materials when popping something off the queue
+/obj/machinery/autolathe/proc/can_build(datum/category_item/autolathe/D, amount = 1, say_errors = TRUE)
+	if(inoperable())
+		return FALSE // Broken or no power, oops!
+	var/coeff = (making.no_scale ? 1 : mat_efficiency) //stacks are unaffected by production coefficient
+	for(var/material in making.resources)
+		if(stored_material[material] < round(making.resources[material] * coeff) * multiplier)
+			if(say_errors)
+				buzz("Not enough materials to complete fabrication.")
+			return FALSE
+	return TRUE
 
-		update_icon() // So lid closes
+/obj/machinery/autolathe/proc/finish_queued_build(var/datum/category_item/autolathe/making, multiplier)
+	//Consume materials.
+	var/coeff = (making.no_scale ? 1 : mat_efficiency) //stacks are unaffected by production coefficient
+	for(var/material in making.resources)
+		if(!isnull(stored_material[material]))
+			stored_material[material] = max(0, stored_material[material] - round(making.resources[material] * coeff) * multiplier)
 
-		sleep(build_time)
+	//Sanity check.
+	if(!making || !src) return
 
-		busy = 0
-		update_use_power(USE_POWER_IDLE)
-		update_icon() // So lid opens
+	//Create the desired item.
+	var/obj/item/I = new making.path(src.loc)
+	if(multiplier > 1)
+		if(istype(I, /obj/item/stack))
+			var/obj/item/stack/S = I
+			S.amount = multiplier
+		else
+			for(multiplier; multiplier > 1; --multiplier) // Create multiple items if it's not a stack.
+				new making.path(src.loc)
 
-		//Sanity check.
-		if(!making || !src) return
-
-		//Create the desired item.
-		var/obj/item/I = new making.path(src.loc)
-		flick("[initial(icon_state)]_finish", src)
-		if(multiplier > 1)
-			if(istype(I, /obj/item/stack))
-				var/obj/item/stack/S = I
-				S.amount = multiplier
-			else
-				for(multiplier; multiplier > 1; --multiplier) // Create multiple items if it's not a stack.
-					new making.path(src.loc)
-
-	updateUsrDialog()
 
 /obj/machinery/autolathe/update_icon()
 	overlays.Cut()
@@ -319,7 +404,7 @@
 		man_rating += M.rating
 
 	storage_capacity[DEFAULT_WALL_MATERIAL] = mb_rating  * 25000
-	storage_capacity["glass"] = mb_rating  * 12500
+	storage_capacity[MAT_GLASS] = mb_rating  * 12500
 	build_time = 50 / man_rating
 	mat_efficiency = 1.1 - man_rating * 0.1// Normally, price is 1.25 the amount of material, so this shouldn't go higher than 0.6. Maximum rating of parts is 5
 
