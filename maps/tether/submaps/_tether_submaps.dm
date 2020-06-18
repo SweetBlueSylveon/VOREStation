@@ -151,6 +151,7 @@
 #include "space/debrisfield.dmm"
 #include "space/fueldepot.dmm"
 #include "space/guttersite.dmm"
+#include "space/luckystation.dmm"
 #endif
 
 #include "beach/_beach.dm"
@@ -235,6 +236,7 @@
 #include "space/pois/_templates.dm"
 #include "space/pois/debrisfield_things.dm"
 #include "space/_guttersite.dm"
+#include "space/_luckystation.dm"
 /datum/map_template/tether_lateload/away_debrisfield
 	name = "Debris Field - Z1 Space"
 	desc = "The Virgo 3 Debris Field away mission."
