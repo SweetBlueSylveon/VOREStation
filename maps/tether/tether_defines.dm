@@ -23,8 +23,9 @@
 #define Z_LEVEL_AEROSTAT_SURFACE			22
 #define Z_LEVEL_DEBRISFIELD					23
 #define Z_LEVEL_GUTTERSITE					24
-#define Z_LEVEL_FUELDEPOT					25
-#define Z_LEVEL_GATEWAY						26
+#define Z_LEVEL_LUCKYSTATION				25
+#define Z_LEVEL_FUELDEPOT					26
+#define Z_LEVEL_GATEWAY						27
 
 //Camera networks
 #define NETWORK_TETHER "Tether"
@@ -161,6 +162,7 @@
 		list("Remmi Aerostat - Z1 Aerostat","Remmi Aerostat - Z2 Surface"),
 		list("Debris Field - Z1 Space"),
 		list("Gutter Site - Z1 Space"),
+		list("Lucky Station - Z1 Space"),
 		list("Fuel Depot - Z1 Space")
 		)
 

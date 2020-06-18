@@ -270,6 +270,15 @@
 	name = "Away Mission - Gutter Site"
 	z = Z_LEVEL_GUTTERSITE
 
+/datum/map_template/tether_lateload/away_luckystation
+	name = "Lucky Station - Z1 Space"
+	desc = "The Virgo Erigone Space Away Site."
+	mappath = 'space/luckystation.dmm'
+	associated_map_datum = /datum/map_z_level/tether_lateload/away_luckystation
+
+/datum/map_z_level/tether_lateload/away_luckystation
+	name = "Away Mission - Lucky Station"
+	z = Z_LEVEL_LUCKYSTATION
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Gateway submaps go here
